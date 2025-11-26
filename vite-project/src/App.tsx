@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import CardSpotlightDemo from './components/StartStudy/startstudy';
 import VirtualStudyRoom from './components/classroom/class';
 import { CombinedDemo } from "./pages/Home";
@@ -7,7 +7,6 @@ import NotFound from './pages/notfound';
 
 function App() {  
   return (
-    
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<CombinedDemo />} />

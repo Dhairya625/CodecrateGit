@@ -1,243 +1,371 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { Textarea } from '../../components/ui/textarea'; // Assuming path
-import { Button } from '../../components/ui/button'; // Assuming path
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Textarea } from '../../components/ui/textarea'; // Adjust path
+import { Button } from '../../components/ui/button';     // Adjust path
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, Menu, X, ArrowLeftRight, Minimize } from 'lucide-react';
-import { DndContext, closestCenter, DragOverlay, useDroppable, useDraggable } from '@dnd-kit/core';
-import { SortableContext, useSortable, arrayMove, rectSortingStrategy } from '@dnd-kit/sortable';
+import { CheckCircle, X, CornerDownRight } from 'lucide-react';
+import { DndContext, DragOverlay, useDraggable, useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
+import { cn } from "../../../lib/utils"; // Adjust path
+import { IconClipboardList, IconNotes, IconCode, IconAlarm, IconHourglassHigh, IconLayoutGrid } from "@tabler/icons-react";
+import { FaSpotify, FaYoutube } from 'react-icons/fa';
+import { Link } from 'react-router-dom';
+import YouTubePlayerWidget from './YouTubePlayer';
 
-import { Sidebar, SidebarBody, SidebarLink } from '../../components/ui/sidebar'; // Assuming path
-import { cn } from "../../../lib/utils"; // Assuming path (e.g., for conditional class joining)
-import {
-    IconClipboardList,
-    IconNotes,
-    IconCode,
-    IconAlarm,
-    IconHourglassHigh,
-    IconLayoutGrid,
-} from "@tabler/icons-react";
-
-
-// --- STATE & TYPE DEFINITIONS ---
+// --- TYPES AND CONSTANTS ---
 const ElementTypes = {
     TODO: 'todo',
     NOTES: 'notes',
     CODE: 'code',
     TIMER: 'timer',
     ALARM: 'alarm',
+    SPOTIFY: 'spotify',
+    YOUTUBE: 'youtube',
 };
 
-type Element = {
+type ElementData = {
+    [ElementTypes.TODO]: { items: { id: number; text: string; completed: boolean }[]; inputValue: string };
+    [ElementTypes.NOTES]: { content: string };
+    [ElementTypes.CODE]: { content: string };
+    [ElementTypes.TIMER]: { time: number; isRunning: boolean };
+    [ElementTypes.ALARM]: { time: string };
+    [ElementTypes.SPOTIFY]: {};
+    [ElementTypes.YOUTUBE]: {};
+};
+
+type Element<T extends keyof typeof ElementTypes = any> = {
     id: string;
-    type: string;
-    colSpan: number;
+    type: T;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    zIndex: number;
+    data: ElementData[T];
 };
 
-export default function VirtualStudyRoom() {
-    // --- STATE HOOKS ---
-    const [elements, setElements] = useState<Element[]>([]);
-    const [activeId, setActiveId] = useState<string | null>(null);
-    const [sidebarOpen, setSidebarOpen] = useState(true);
+// --- WIDGET COMPONENTS ---
 
-    // State for individual widgets' content
-    const [todo, setTodo] = useState('');
-    const [todos, setTodos] = useState<string[]>([]);
-    const [notes, setNotes] = useState('');
-    const [code, setCode] = useState('');
-    const [timer, setTimer] = useState(25 * 60); // 25 minutes for Pomodoro
-    const [isRunning, setIsRunning] = useState(false);
-
-    // --- CORE LOGIC ---
+type TodoListProps = {
+    data: ElementData['todo'];
+    onDataChange: (d: Partial<ElementData['todo']>) => void;
+};
+const TodoList: React.FC<TodoListProps> = function TodoList({ data, onDataChange }: TodoListProps) {
+    const todoData = data as ElementData['todo'];
     const handleAddTodo = () => {
-        if (todo.trim()) {
-            setTodos([...todos, todo]);
-            setTodo('');
-        }
-    };
-
-    const handleTimerToggle = () => setIsRunning(!isRunning);
-
-    useEffect(() => {
-        let interval: ReturnType<typeof setInterval> | undefined;
-        if (isRunning && timer > 0) {
-            interval = setInterval(() => setTimer((prev) => prev - 1), 1000);
-        } else if (timer === 0) {
-            setIsRunning(false);
-            // Optionally, add a notification or sound when timer finishes
-        }
-        return () => clearInterval(interval);
-    }, [isRunning, timer]);
-
-    const handleDragEnd = (event: any) => {
-        const { over, active } = event;
-
-        // Determine if the dragged item originated from the sidebar (i.e., a new widget type)
-        const isDraggingFromSidebar = Object.values(ElementTypes).includes(active.id as string);
-
-        if (isDraggingFromSidebar && over && over.id === 'main-area') {
-            // Case 1: Dragging from sidebar to main area (adding new element)
-            const newElement: Element = {
-                id: `${active.id}-${Date.now()}`, // Unique ID for each instance
-                type: active.id as string,
-                colSpan: 1, // Default size
-            };
-            setElements((prev) => [...prev, newElement]);
-        }
-        // Case 2: Reordering an existing element within the main area
-        // Ensure both active and over IDs correspond to elements already in the `elements` state
-        else if (
-            over &&
-            active.id !== over.id &&
-            elements.some(el => el.id === active.id) &&
-            elements.some(el => el.id === over.id)
-        ) {
-            setElements((elements) => {
-                const oldIndex = elements.findIndex((el) => el.id === active.id);
-                const newIndex = elements.findIndex((el) => el.id === over.id);
-
-                if (oldIndex !== -1 && newIndex !== -1) {
-                    return arrayMove(elements, oldIndex, newIndex);
-                }
-                return elements;
+        const inputValue = 'inputValue' in todoData ? String(todoData.inputValue) : '';
+        if (inputValue && inputValue.trim()) {
+            const items = 'items' in todoData && Array.isArray(todoData.items) ? todoData.items : [];
+            onDataChange({
+                items: [...items, { id: Date.now(), text: inputValue, completed: false }],
+                inputValue: '',
             });
         }
-        setActiveId(null);
     };
-
-    const removeElement = (id: string) => {
-        setElements((prev) => prev.filter((el) => el.id !== id));
+    const toggleTodo = (id: number) => {
+        const items = 'items' in todoData && Array.isArray(todoData.items) ? todoData.items : [];
+        onDataChange({ items: items.map((t: { id: number; text: string; completed: boolean }) => t.id === id ? { ...t, completed: !t.completed } : t) });
     };
+    const inputValue = 'inputValue' in todoData ? String(todoData.inputValue || '') : '';
+    const items = 'items' in todoData && Array.isArray(todoData.items) ? todoData.items : [];
+    
+    return (
+        <div className="space-y-2">
+            <div className="flex gap-2">
+                <input type="text" value={inputValue} onChange={(e) => onDataChange({ inputValue: e.target.value })} onKeyPress={e => e.key === 'Enter' && handleAddTodo()} className="flex-1 p-2 rounded-lg bg-white border border-[#C5C7BC] focus:ring-2 focus:ring-[#B6AE9F] focus:outline-none text-sm text-[#5a5348]" placeholder="New task..."/>
+                <Button onClick={handleAddTodo} className="bg-[#B6AE9F] hover:bg-[#a0988a] text-white font-bold rounded-lg px-3 text-sm">Add</Button>
+            </div>
+            <ul className="space-y-1.5 max-h-48 overflow-y-auto pr-1">{items.map((t: { id: number; text: string; completed: boolean }) => ( <li key={t.id} onClick={() => toggleTodo(t.id)} className={cn("flex items-center gap-2 text-[#5a5348] p-2 bg-white/50 rounded-md text-sm cursor-pointer border border-[#C5C7BC]", t.completed && "line-through text-[#7a7368]")}> <CheckCircle className={t.completed ? "text-[#B6AE9F]" : "text-[#7a7368]"} size={14} /> <span>{t.text}</span></li>))}</ul>
+        </div>
+    );
+};
 
-    const resizeElement = (id: string, newSpan: number) => {
-        setElements((prev) =>
-            prev.map((el) =>
-                el.id === id ? { ...el, colSpan: Math.max(1, Math.min(3, newSpan)) } : el
-            )
-        );
-    };
+type NotesWidgetProps = { data: ElementData['notes']; onDataChange: (d: Partial<ElementData['notes']>) => void; };
+const NotesWidget: React.FC<NotesWidgetProps> = function NotesWidget({ data, onDataChange }: NotesWidgetProps) {
+    const notesData = data as ElementData['notes'];
+    const content = 'content' in notesData ? String(notesData.content || '') : '';
+    return (
+        <Textarea className="w-full flex-grow min-h-[150px] bg-white border-[#C5C7BC] p-2 rounded-md shadow-inner focus:ring-2 focus:ring-[#B6AE9F] focus:outline-none text-sm text-[#5a5348]" value={content} onChange={(e) => onDataChange({ content: e.target.value })} placeholder="Jot down your thoughts..."/>
+    );
+};
 
-    // --- COMPONENT MAPPING ---
-    const elementComponents = {
-        [ElementTypes.TODO]: {
-            title: "Todo List",
-            icon: <IconClipboardList size={20} />,
-            component: (
-                <div className="space-y-3">
-                    <div className="flex gap-2">
-                        <input type="text" value={todo} onChange={(e) => setTodo(e.target.value)} className="flex-1 p-2 rounded-md bg-black/20 border border-white/10 focus:ring-1 focus:ring-cyan-400 focus:outline-none text-sm" placeholder="New task..."/>
-                        <Button onClick={handleAddTodo} className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold rounded-md px-3 text-sm">Add</Button>
-                    </div>
-                    <ul className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {todos.map((t, i) => ( <li key={i} className="flex items-center gap-2 text-neutral-100 p-2 bg-black/20 rounded-md text-sm"><CheckCircle className="text-green-400" size={16} /><span>{t}</span></li>))}
-                    </ul>
-                </div>
-            )
-        },
-        [ElementTypes.NOTES]: {
-            title: "Notes",
-            icon: <IconNotes size={20} />,
-            component: (
-                   <Textarea className="w-full flex-grow min-h-[150px] bg-black/20 border border-white/10 p-3 rounded-md shadow-inner focus:ring-1 focus:ring-purple-400 focus:outline-none text-sm" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Jot down your thoughts..."/>
-            )
-        },
-        [ElementTypes.CODE]: {
-            title: "Code Scratchpad",
-            icon: <IconCode size={20} />,
-            component: (
-                <Textarea className="w-full flex-grow min-h-[150px] font-mono text-xs bg-black/20 border border-white/10 p-3 rounded-md shadow-inner focus:ring-1 focus:ring-amber-400 focus:outline-none" value={code} onChange={(e) => setCode(e.target.value)} placeholder=">_ your code snippet here..."/>
-            )
-        },
-        [ElementTypes.TIMER]: {
-            title: "Pomodoro Timer",
-            icon: <IconHourglassHigh size={20} />,
-            component: (
-                <div className="text-center space-y-3 flex flex-col items-center justify-center h-full">
-                    <div className="text-5xl font-bold text-white bg-black/20 p-2 rounded-full w-32 h-32 flex items-center justify-center border-4 border-white/20 shadow-md">
-                        {Math.floor(timer / 60)}:{(timer % 60).toString().padStart(2, '0')}
-                    </div>
-                    <Button onClick={handleTimerToggle} className="bg-rose-500 hover:bg-rose-600 px-8 py-2 rounded-full text-white font-semibold text-base transition-all shadow-lg">
-                        {isRunning ? 'Pause' : 'Start'}
-                    </Button>
-                </div>
-            )
-        },
-        [ElementTypes.ALARM]: {
-            title: "Alarm",
-            icon: <IconAlarm size={20} />,
-            component: (
-                   <div className="space-y-3 text-center h-full flex flex-col items-center justify-center">
-                    <p className="text-xs text-gray-300">(Feature in development)</p>
-                    <label className="sr-only" htmlFor="alarm-time">Set Alarm Time</label>
-                    <input id="alarm-time" type="time" className="p-2 rounded-lg bg-black/20 border border-white/10 focus:ring-1 focus:ring-lime-400 focus:outline-none text-white text-base w-32" placeholder="HH:MM"/>
-                </div>
-            )
-        },
-    };
+type CodeWidgetProps = { data: ElementData['code']; onDataChange: (d: Partial<ElementData['code']>) => void; };
+const CodeWidget: React.FC<CodeWidgetProps> = function CodeWidget({ data, onDataChange }: CodeWidgetProps) {
+    const codeData = data as ElementData['code'];
+    const content = 'content' in codeData ? String(codeData.content || '') : '';
+    return (
+        <Textarea className="w-full flex-grow min-h-[150px] font-mono text-sm bg-white border-[#C5C7BC] p-2 rounded-md shadow-inner focus:ring-2 focus:ring-[#B6AE9F] focus:outline-none text-[#5a5348]" value={content} onChange={(e) => onDataChange({ content: e.target.value })} placeholder="> your code snippet here..."/>
+    );
+};
 
-    const sidebarLinks = Object.values(ElementTypes).map(type => ({
-        id: type,
-        label: elementComponents[type].title,
-        icon: React.cloneElement(elementComponents[type].icon, {className: "h-5 w-5 shrink-0"}),
-    }));
+type TimerWidgetProps = { data: ElementData['timer']; onDataChange: (d: Partial<ElementData['timer']>) => void; };
+const TimerWidget: React.FC<TimerWidgetProps> = function TimerWidget({ data, onDataChange }: TimerWidgetProps) {
+    const timerData = data as ElementData['timer'];
+    const isRunning = 'isRunning' in timerData ? Boolean(timerData.isRunning) : false;
+    const time = 'time' in timerData ? Number(timerData.time) : 0;
+    
+    useEffect(() => {
+        let intervalId: number;
+        if (isRunning && time > 0) {
+            intervalId = window.setInterval(() => onDataChange({ time: time - 1 }), 1000);
+        } else if (time === 0 && isRunning) {
+            onDataChange({ isRunning: false });
+        }
+        return () => window.clearInterval(intervalId);
+    }, [isRunning, time, onDataChange]);
 
     return (
-        <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} onDragStart={({ active }) => setActiveId(active.id as string)}>
-           <div className="min-h-screen w-full flex bg-neutral-900 text-white overflow-hidden">
-                {/* --- AURORA BACKGROUND --- */}
-                <div className="absolute inset-0 -z-10">
-                    <div className="absolute w-[400px] h-[400px] bg-purple-600 rounded-full -top-40 -left-40 filter blur-3xl opacity-20 animate-blob"></div>
-                    <div className="absolute w-[400px] h-[400px] bg-cyan-600 rounded-full -bottom-40 -right-40 filter blur-3xl opacity-20 animate-blob animation-delay-2000"></div>
-                    <div className="absolute w-[300px] h-[300px] bg-rose-600 rounded-full bottom-20 left-20 filter blur-3xl opacity-20 animate-blob animation-delay-4000"></div>
-                </div>
+        <div className="text-center space-y-3 flex flex-col items-center justify-center h-full">
+            <div className="text-5xl font-bold text-[#5a5348] bg-[#FBF3D1] p-4 rounded-full w-36 h-36 flex items-center justify-center border-4 border-[#B6AE9F] shadow-lg">
+                {Math.floor(time / 60)}:{(time % 60).toString().padStart(2, '0')}
+            </div>
+            <Button onClick={() => onDataChange({ isRunning: !isRunning })} className="bg-[#B6AE9F] hover:bg-[#a0988a] px-6 py-2 rounded-full text-white font-semibold text-base transition-all shadow-lg">{isRunning ? 'Pause' : 'Start'}</Button>
+        </div>
+    );
+};
 
-                {/* --- RESPONSIVE SIDEBAR --- */}
-                <Sidebar open={sidebarOpen} setOpen={setSidebarOpen}>
-                    <SidebarBody>
-                        <div className="flex flex-1 flex-col">
-                            <div className="flex items-center gap-2 py-1 z-20"><IconLayoutGrid className="h-7 w-7 text-cyan-400" /><motion.span initial={{ opacity: 0 }} animate={{ opacity: sidebarOpen ? 1 : 0 }} className="font-bold text-lg whitespace-pre text-white">Study Room</motion.span></div>
-                            <div className="mt-8 flex flex-col gap-2"><h2 className={cn("text-sm font-semibold text-neutral-400 mb-2 transition-opacity", !sidebarOpen && "opacity-0")}>Widgets</h2>
-                                {sidebarLinks.map((link) => (<DraggableSidebarLink key={link.id} link={link} sidebarOpen={sidebarOpen} />))}
+type AlarmWidgetProps = { data: ElementData['alarm']; onDataChange: (d: Partial<ElementData['alarm']>) => void; };
+const AlarmWidget: React.FC<AlarmWidgetProps> = function AlarmWidget({ data, onDataChange }: AlarmWidgetProps) {
+    const time = 'time' in data ? String(data.time || '') : '';
+    return (
+        <div className="space-y-3 text-center h-full flex flex-col items-center justify-center">
+            <p className="text-sm text-[#7a7368]">(Feature in development)</p>
+            <input type="time" value={time} onChange={(e) => onDataChange({ time: e.target.value })} className="p-2 rounded-lg bg-white border border-[#C5C7BC] focus:ring-2 focus:ring-[#B6AE9F] focus:outline-none text-[#5a5348] text-lg w-32"/>
+        </div>
+    );
+};
+
+const SpotifyWidget: React.FC = () => (
+    <div className="flex flex-col items-center justify-center h-full gap-4">
+        <FaSpotify size={48} color="#1DB954" />
+        <button className="px-5 py-2.5 rounded-full bg-[#B6AE9F] hover:bg-[#a0988a] text-white font-bold shadow-lg">Connect Spotify</button>
+        <p className="text-xs text-[#7a7368]">Spotify integration coming soon!</p>
+    </div>
+);
+
+const YouTubeWidget: React.FC = () => (
+    <YouTubePlayerWidget />
+);
+
+const ELEMENT_COMPONENTS = {
+    [ElementTypes.TODO]: { title: "Todo List", icon: <IconClipboardList size={18} />, component: TodoList, defaultData: { items: [], inputValue: '' } },
+    [ElementTypes.NOTES]: { title: "Notes", icon: <IconNotes size={18} />, component: NotesWidget, defaultData: { content: '' } },
+    [ElementTypes.CODE]: { title: "Code Scratchpad", icon: <IconCode size={18} />, component: CodeWidget, defaultData: { content: '' } },
+    [ElementTypes.TIMER]: { title: "Pomodoro Timer", icon: <IconHourglassHigh size={18} />, component: TimerWidget, defaultData: { time: 25 * 60, isRunning: false } },
+    [ElementTypes.ALARM]: { title: "Alarm", icon: <IconAlarm size={18} />, component: AlarmWidget, defaultData: { time: '09:00' } },
+    [ElementTypes.SPOTIFY]: { title: "Spotify Player", icon: <FaSpotify size={18} color="#1DB954" />, component: SpotifyWidget, defaultData: {} },
+    [ElementTypes.YOUTUBE]: { title: "YouTube Player", icon: <FaYoutube size={18} color="#FF0000" />, component: YouTubeWidget, defaultData: {} },
+};
+
+const SIDEBAR_LINKS = Object.entries(ELEMENT_COMPONENTS).map(([type, { title, icon }]) => ({
+    id: type,
+    label: title,
+    icon: icon,
+}));
+
+// --- MAIN COMPONENT ---
+export default function VirtualStudyRoom() {
+    const [elements, setElements] = useState<Element[]>([]);
+    const [activeId, setActiveId] = useState<string | null>(null);
+    const mainWorkspaceRef = useRef<HTMLDivElement>(null);
+    
+    // ***** FIX: Added state to track the drag's starting position *****
+    const [dragStartPosition, setDragStartPosition] = useState<{x: number, y: number} | null>(null);
+
+    const updateElementData = useCallback((elementId: string, newData: object) => {
+        setElements(prev =>
+            prev.map(el =>
+                el.id === elementId ? { ...el, data: { ...el.data, ...newData } } : el
+            )
+        );
+    }, []);
+
+    const bringToFront = (elementId: string) => {
+        setElements(prev => {
+            const maxZIndex = Math.max(0, ...prev.map(el => el.zIndex)) || 10;
+            return prev.map(el => ({
+                ...el,
+                zIndex: el.id === elementId ? maxZIndex + 1 : el.zIndex,
+            }));
+        });
+    };
+    
+    const handleDragEnd = (event: any) => {
+        const { active, over, delta } = event;
+        setActiveId(null);
+        setDragStartPosition(null); // Reset start position
+
+        if (!active) return;
+
+        const isNewWidget = SIDEBAR_LINKS.some(link => link.id === active.id);
+        if (isNewWidget && over && over.id === 'main-area') {
+            const workspaceRect = mainWorkspaceRef.current?.getBoundingClientRect();
+            // ***** FIX: Use stored start position and delta for accuracy *****
+            if (!workspaceRect || !dragStartPosition) return;
+
+            const finalCursorX = dragStartPosition.x + delta.x;
+            const finalCursorY = dragStartPosition.y + delta.y;
+
+            const dropX = finalCursorX - workspaceRect.left;
+            const dropY = finalCursorY - workspaceRect.top;
+            
+            const type = active.id as keyof typeof ELEMENT_COMPONENTS;
+            const newElement: Element = {
+                id: `${type}-${Date.now()}`,
+                type: type,
+                x: Math.max(0, dropX),
+                y: Math.max(0, dropY),
+                width: 1.25,
+                height: 1.25,
+                zIndex: (Math.max(0, ...elements.map(el => el.zIndex)) || 10) + 1,
+                data: ELEMENT_COMPONENTS[type].defaultData as any,
+            };
+            setElements(prev => [...prev, newElement]);
+        }
+        else if (elements.some(el => el.id === active.id)) {
+            setElements(prev => prev.map(el => 
+                el.id === active.id ? { ...el, x: el.x + delta.x, y: el.y + delta.y } : el
+            ));
+        }
+    };
+
+    const removeElement = (id: string) => setElements(prev => prev.filter(el => el.id !== id));
+    
+    const resizeElement = (id: string, newWidth: number, newHeight: number) => {
+        setElements(prev => prev.map(el =>
+            el.id === id ? { ...el, width: newWidth, height: newHeight } : el
+        ));
+    };
+
+    return (
+        <DndContext 
+            onDragStart={({ active, activatorEvent }) => {
+                setActiveId(active.id as string);
+                // ***** FIX: Record the drag's starting client coordinates *****
+                if (
+                    activatorEvent &&
+                    typeof (activatorEvent as any).clientX === "number" &&
+                    typeof (activatorEvent as any).clientY === "number"
+                ) {
+                    setDragStartPosition({
+                        x: (activatorEvent as MouseEvent).clientX,
+                        y: (activatorEvent as MouseEvent).clientY,
+                    });
+                }
+            }} 
+            onDragEnd={handleDragEnd}
+        >
+            <div className="w-full h-screen flex flex-col md:flex-row bg-[#DEDED1] text-[#5a5348] overflow-hidden relative">
+
+                {/* Apple Dock Style Sidebar */}
+                <div className="flex-shrink-0 z-40 px-3 py-6">
+                    <div className="h-full w-16 flex flex-col items-center bg-[#F8F8F3]/80 backdrop-blur-xl rounded-3xl border border-[#C5C7BC]/50 shadow-xl relative overflow-hidden">
+                        {/* Dock background glow */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-transparent pointer-events-none"></div>
+                        
+                        {/* Dock content */}
+                        <div className="relative z-10 flex flex-col items-center gap-3 w-full px-2 py-4">
+                            {/* Study Room Icon */}
+                            <motion.div 
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                transition={{ delay: 0.1 }}
+                                className="w-11 h-11 rounded-2xl bg-[#B6AE9F] flex items-center justify-center shadow-lg cursor-pointer hover:scale-110 transition-transform duration-200 mb-2"
+                            >
+                                <IconLayoutGrid className="h-5 w-5 text-white" />
+                            </motion.div>
+                            
+                            {/* Divider */}
+                            <div className="w-8 h-px bg-[#C5C7BC]/20 my-1"></div>
+                            
+                            {/* Widget Icons */}
+                            <div className="flex flex-col gap-3 flex-1 items-center justify-start mt-2">
+                                {SIDEBAR_LINKS.map((link) => (
+                                    <DraggableSidebarLink key={link.id} link={link} />
+                                ))}
                             </div>
                         </div>
-                    </SidebarBody>
-                </Sidebar>
+                    </div>
+                </div>
 
-                {/* --- MAIN CONTENT AREA --- */}
-                <main className="flex-1 transition-all duration-300 ease-in-out p-4 md:p-6 flex flex-col">
-                       <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-2 rounded-full bg-black/10 backdrop-blur-sm fixed top-4 right-4 z-50" title="Toggle Sidebar"><Menu size={24}/></button>
-                    <DroppableArea id="main-area">
-                        {elements.length === 0 ? (
-                               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-neutral-400 text-center text-lg m-auto">Drag widgets from the sidebar to build your space!</motion.div>
-                        ) : (
-                            // SortableContext for reordering elements
-                            <SortableContext items={elements.map(el => el.id)} strategy={rectSortingStrategy}>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full h-full">
-                                    <AnimatePresence>
-                                        {elements.map((element) => {
-                                            const { title, icon, component } = elementComponents[element.type];
-                                            return (
-                                                <SortableElementCard key={element.id} element={element} title={title} icon={icon} onRemove={removeElement} onResize={resizeElement}>
-                                                    {component}
-                                                </SortableElementCard>
-                                            );
-                                        })}
-                                    </AnimatePresence>
-                                </div>
-                            </SortableContext>
-                        )}
-                    </DroppableArea>
-                </main>
+                <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
+                    <main className="flex-1 min-h-0 min-w-0 flex flex-col p-2 md:p-4 relative">
+                        <motion.div 
+                            initial={{ y: -60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 100, damping: 20 }}
+                            className="flex items-center justify-between mb-4 p-2 bg-[#F8F8F3] backdrop-blur-md rounded-2xl border border-[#C5C7BC] z-30 shadow-lg"
+                        >
+                            <div className="flex items-center gap-2">
+                                <Link to="/" className="p-2 rounded-lg bg-[#B6AE9F] hover:bg-[#a0988a] text-white font-semibold shadow hover:opacity-90 transition-all duration-200 flex items-center gap-1">
+                                    <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
+                                    Home
+                                </Link>
+                            </div>
+                            <div className="text-center">
+                                <h1 className="text-xl font-bold text-[#5a5348]">My Workspace</h1>
+                                <p className="text-xs text-[#7a7368]">Drag & Drop Your Tools</p>
+                            </div>
+                            <div></div>
+                        </motion.div>
+
+                        <DroppableArea id="main-area" ref={mainWorkspaceRef}>
+                            <AnimatePresence>
+                                {elements.length === 0 && (
+                                    <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="flex items-center justify-center h-full text-center text-[#7a7368]">
+                                        <div>
+                                            <div className="text-6xl mb-4">🎯</div>
+                                            <h2 className="text-xl font-semibold text-[#5a5348] mb-2">Workspace is Empty</h2>
+                                            <p className="text-[#7a7368]">Drag widgets from the sidebar to begin!</p>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                            
+                            {elements.map(element => {
+                                const { title, icon, component: WidgetComponent } = ELEMENT_COMPONENTS[element.type];
+                                return (
+                                    <DraggableElementCard
+                                        key={element.id}
+                                        element={element}
+                                        title={title}
+                                        icon={icon}
+                                        onRemove={removeElement}
+                                        onResize={resizeElement}
+                                        onActivate={() => bringToFront(element.id)}
+                                    >
+                                        {/* Type assertion to ensure correct data type for each widget */}
+                                        <WidgetComponent
+                                            data={element.data as ElementData[keyof typeof ElementTypes]}
+                                            onDataChange={(newData: any) => updateElementData(element.id, newData)}
+                                        />
+                                    </DraggableElementCard>
+                                );
+                            })}
+                            
+                            {elements.length > 0 && (
+                                <motion.button initial={{ scale: 0, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} onClick={() => setElements([])} className="absolute bottom-4 right-4 p-3 rounded-full bg-[#B6AE9F] hover:bg-[#a0988a] text-white shadow-lg transition-all duration-200 border border-[#C5C7BC] z-30" title="Clear all widgets">
+                                    <X size={24} />
+                                </motion.button>
+                            )}
+                        </DroppableArea>
+                    </main>
+
+                </div>
 
                 <DragOverlay>
                     {activeId && (
-                        // Render a simplified version of the dragged element for the overlay
-                        <div className="p-3 rounded-lg bg-cyan-600/80 backdrop-blur-md cursor-grabbing text-sm text-white text-center font-semibold shadow-lg flex items-center justify-center gap-2">
-                            {sidebarLinks.find(link => link.id === activeId)?.icon || elementComponents[elements.find(el => el.id === activeId)?.type || '']?.icon}
-                            {sidebarLinks.find(link => link.id === activeId)?.label || elementComponents[elements.find(el => el.id === activeId)?.type || '']?.title || activeId}
-                        </div>
+                        <motion.div
+                            initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                            className="p-4 rounded-2xl bg-[#F8F8F3] backdrop-blur-xl cursor-grabbing text-sm text-[#5a5348] text-center font-semibold shadow-2xl flex items-center justify-center gap-3 z-50 border border-[#C5C7BC]"
+                            style={{ boxShadow: '0 20px 40px rgba(90,83,72,0.2)' }}
+                        >
+                            <div className="p-2 rounded-lg bg-[#DEDED1]">
+                                {SIDEBAR_LINKS.find(link => link.id === activeId)?.icon || ELEMENT_COMPONENTS[elements.find(el => el.id === activeId)?.type || '' as any]?.icon}
+                            </div>
+                            <span>
+                                {SIDEBAR_LINKS.find(link => link.id === activeId)?.label || ELEMENT_COMPONENTS[elements.find(el => el.id === activeId)?.type || '' as any]?.title || 'Dragging...'}
+                            </span>
+                        </motion.div>
                     )}
                 </DragOverlay>
             </div>
@@ -245,96 +373,117 @@ export default function VirtualStudyRoom() {
     );
 }
 
-
-// --- WIDGET WRAPPER COMPONENT (SORTABLE) ---
-function SortableElementCard({ title, icon, element, onRemove, onResize, children }: { title: string; icon: JSX.Element; element: Element; onRemove: (id: string) => void; onResize: (id: string, newSpan: number) => void; children: React.ReactNode; }) {
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-        isDragging,
-    } = useSortable({ id: element.id });
-
+// --- SUB-COMPONENTS ---
+function DraggableElementCard({ title, icon, element, onRemove, onResize, children, onActivate }: { 
+    title: string; icon: React.ReactElement; element: Element; onRemove: (id: string) => void; 
+    onResize: (id: string, w: number, h: number) => void; children: React.ReactNode; onActivate: () => void; 
+}) {
+    const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: element.id });
+    
     const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        // Add a slight opacity reduction when dragging to make it clear it's being moved
-        opacity: isDragging ? 0.8 : 1,
-        zIndex: isDragging ? 100 : 'auto', // Bring dragged item to front
-        // Disable pointer events on the dragged item itself so events pass through to underlying elements
-        // This can sometimes help with dropping on empty spaces or other targets
-        pointerEvents: isDragging ? 'none' : 'auto',
+        position: 'absolute' as const,
+        left: `${element.x}px`,
+        top: `${element.y}px`,
+        width: `${element.width * 200}px`,
+        height: `${element.height * 150}px`,
+        minWidth: '200px',
+        minHeight: '150px',
+        zIndex: isDragging ? 9999 : element.zIndex,
+        transform: transform ? CSS.Translate.toString(transform) : undefined,
     };
 
-    const colSpanClass = {
-        1: 'md:col-span-1',
-        2: 'md:col-span-2',
-        3: 'md:col-span-3',
-    };
-
+    function onResizeDrag(e: React.MouseEvent) {
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startWidth = element.width;
+        const startHeight = element.height;
+        function onMouseMove(ev: MouseEvent) {
+            const dx = ev.clientX - startX;
+            const dy = ev.clientY - startY;
+            const newWidth = Math.max(1, startWidth + dx / 200);
+            const newHeight = Math.max(1, startHeight + dy / 150);
+            onResize(element.id, newWidth, newHeight);
+        }
+        function onMouseUp() {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        }
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    }
+    
     return (
         <motion.div
             ref={setNodeRef}
-            style={style} // Apply sortable styles
-            layout // Enable Framer Motion layout animations for smooth reordering
-            initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.3 }}
-            className={cn(
-                "p-4 rounded-2xl border border-white/10 bg-clip-padding backdrop-filter backdrop-blur-xl bg-opacity-30 bg-gray-500/10 shadow-lg flex flex-col h-full",
-                colSpanClass[element.colSpan as keyof typeof colSpanClass]
-            )}
-            // {...attributes} // Attributes for the main draggable element (can be placed on handle too)
+            style={style}
+            layout
+            initial={{ opacity: 0, scale: 0.9, y: 50 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            onMouseDownCapture={onActivate}
+            className={cn('p-1 rounded-2xl bg-clip-padding backdrop-filter backdrop-blur-xl bg-[#F8F8F3] border border-[#C5C7BC] flex flex-col group transition-all duration-300 shadow-lg')}
         >
-            <div className="flex items-center justify-between mb-3 text-neutral-300">
-                <div
-                    className="flex items-center gap-2 font-semibold text-sm cursor-grab"
-                    {...listeners} // Listeners for the drag handle (title/icon area)
-                    {...attributes} // Attributes for the drag handle
-                >
-                    {icon}
-                    <span>{title}</span>
+            <div className="flex items-center justify-between p-3 text-[#5a5348] select-none">
+                <div {...listeners} {...attributes} className="flex items-center gap-2 font-semibold text-sm cursor-grab w-full">
+                    {icon}<span>{title}</span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button onClick={() => onResize(element.id, element.colSpan + 1)} className="p-1 hover:text-white transition-colors disabled:opacity-50" disabled={element.colSpan >= 3} title="Increase column span"><ArrowLeftRight size={14}/></button>
-                    <button onClick={() => onResize(element.id, element.colSpan - 1)} className="p-1 hover:text-white transition-colors disabled:opacity-50" disabled={element.colSpan <= 1} title="Decrease column span"><Minimize size={14}/></button>
-                    <button onClick={() => onRemove(element.id)} className="p-1 hover:text-rose-400 transition-colors" title="Remove element"><X size={16}/></button>
-                </div>
-            </div>  
-            <div className="flex-grow h-full flex flex-col">
+                <motion.button whileTap={{scale: 0.8}} onClick={(e) => { e.stopPropagation(); onRemove(element.id); }} className="p-1.5 hover:bg-[#B6AE9F]/20 text-[#7a7368] hover:text-[#5a5348] rounded-full transition-colors" title="Remove element">
+                    <X size={16}/>
+                </motion.button>
+            </div>
+            <div className="flex-grow h-full overflow-auto p-3 pt-0">
                 {children}
+            </div>
+            <div onMouseDown={onResizeDrag} className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize z-50 flex items-center justify-center text-[#7a7368] opacity-50 group-hover:opacity-100 transition-opacity" title="Resize">
+                <CornerDownRight size={16} />
             </div>
         </motion.div>
     );
 }
 
-// --- Draggable Sidebar Link Component ---
-function DraggableSidebarLink({ link, sidebarOpen }: { link: any; sidebarOpen: boolean }) {
+function DraggableSidebarLink({ link }: { link: {id: string; label: string; icon: React.ReactElement;} }) {
     const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: link.id });
     return (
-        <div ref={setNodeRef} {...listeners} {...attributes} className={cn("cursor-grab transition-opacity", isDragging && "opacity-50")}>
-            <SidebarLink link={link} open={sidebarOpen} />
-        </div>
-    );
-}
-
-// --- Droppable Area Component ---
-function DroppableArea({ id, children }: { id: string; children: React.ReactNode }) {
-    const { setNodeRef, isOver } = useDroppable({ id });
-
-    // Helper to determine if children exist (to center placeholder text)
-    const hasChildren = React.Children.count(children) > 0;
-
-    return (
-        <div
+        <motion.div
             ref={setNodeRef}
-            className={cn(
-                "h-full w-full space-y-6 p-4 rounded-2xl bg-black/10 border border-dashed border-white/10 flex flex-col overflow-auto transition-colors",
-                isOver && "border-cyan-400 bg-cyan-500/5",
-                !hasChildren && "items-center justify-center" // Center content if no children
-            )}
+            {...listeners}
+            {...attributes}
+            className={cn("cursor-grab", isDragging && "opacity-50")}
+            whileHover={{ scale: 1.2 }}
+            whileTap={{ scale: 0.9 }}
         >
-            {children}
-        </div>
+            <div className="group relative flex items-center justify-center w-12 h-12 rounded-2xl transition-all duration-300 hover:bg-[#FBF3D1]/80">
+                <div className="flex items-center justify-center text-[#B6AE9F] group-hover:scale-110 transition-transform duration-200">
+                    {link.icon}
+                </div>
+                {/* Tooltip */}
+                <div className="absolute left-16 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-[#5a5348] text-white text-xs font-medium rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 whitespace-nowrap shadow-lg z-50">
+                    {link.label}
+                    <div className="absolute left-0 top-1/2 -translate-x-full -translate-y-1/2 border-4 border-transparent border-r-[#5a5348]"></div>
+                </div>
+            </div>
+        </motion.div>
     );
 }
+
+const DroppableArea = React.forwardRef<HTMLDivElement, { id: string; children: React.ReactNode }>(({ id, children }, ref) => {
+    const { setNodeRef, isOver } = useDroppable({ id });
+    return (
+        <div ref={setNodeRef} className="h-full w-full relative">
+             <div ref={ref} className={cn("absolute inset-0 rounded-2xl transition-all duration-300", isOver ? "bg-[#FBF3D1]/20 border-2 border-dashed border-[#B6AE9F]" : "bg-[#DEDED1]/50 border-[#C5C7BC]/30")}>
+                {isOver && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="text-[#5a5348] text-lg font-medium bg-[#F8F8F3] px-6 py-3 rounded-full backdrop-blur-sm border border-[#B6AE9F]">
+                            ✨ Drop to Add Widget ✨
+                        </div>
+                    </motion.div>
+                )}
+             </div>
+             {children}
+        </div>
+    );
+});
+DroppableArea.displayName = 'DroppableArea';
+

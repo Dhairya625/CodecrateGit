@@ -112,13 +112,13 @@ export const WavyBackground = ({
   return (
     <div
       className={bg(
-        "h-screen flex flex-col items-center justify-center",
+        "h-full w-full flex flex-col items-center justify-center",
         containerClassName
       )}
     >
       <canvas
         className={bg(
-          "absolute inset-0 z-0",
+          "absolute inset-0 z-0 w-full h-full",
           isSafari ? "safari-blur" : ""
         )}
         ref={canvasRef}
